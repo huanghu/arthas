@@ -32,10 +32,10 @@ public class TraceView extends ResultView<TraceModel> {
 
     @Override
     public void draw(CommandProcess process, TraceModel result) {
-        process.write(drawTree(result.getRoot())).write("\n");
+        process.write(drawTree(result.getRoot(), result.getTag())).write("\n");
     }
 
-    public String drawTree(TraceNode root) {
+    public String drawTree(TraceNode root, String tag) {
 
         //reset status
         maxCostNode = null;
@@ -53,6 +53,9 @@ public class TraceView extends ResultView<TraceModel> {
                 renderNode(treeSB, node, highlighted);
                 if (!StringUtils.isBlank(node.getMark())) {
                     treeSB.append(" [").append(node.getMark()).append(node.marks() > 1 ? "," + node.marks() : "").append("]");
+                }
+                if (!StringUtils.isBlank(tag)) {
+                    treeSB.append(" [tag=").append(tag).append("]");
                 }
                 treeSB.append("\n");
             }

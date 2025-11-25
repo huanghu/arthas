@@ -22,8 +22,8 @@ public class TraceEntity {
         return new TraceTree(ThreadUtil.getThreadNode(loader, Thread.currentThread()));
     }
 
-    public TraceModel getModel() {
+    public TraceModel getModel(String tag) {
         tree.trim();
-        return new TraceModel(tree.getRoot(), tree.getNodeCount());
+        return new TraceModel(tree.getRoot(), tree.getNodeCount(), tag);
     }
 }
