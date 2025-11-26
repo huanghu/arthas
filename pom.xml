@@ -69,6 +69,7 @@
         <module>testcase</module>
         <module>site</module>
         <module>packaging</module>
+        <module>arthas-lite</module>
         <module>labs/arthas-grpc-web-proxy</module>
         <module>labs/cluster-management/native-agent</module>
         <module>labs/cluster-management/native-agent-management-web</module>
