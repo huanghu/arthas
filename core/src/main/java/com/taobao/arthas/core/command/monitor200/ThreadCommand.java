@@ -1,5 +1,17 @@
 package com.taobao.arthas.core.command.monitor200;
 
+import java.lang.Thread.State;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.model.BlockingLockInfo;
 import com.taobao.arthas.core.command.model.BusyThreadInfo;
@@ -18,18 +30,6 @@ import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
 
-import java.lang.Thread.State;
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
-import java.lang.management.ThreadMXBean;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
  * @author hengyunabc 2015年12月7日 下午2:06:21
  */
@@ -43,6 +43,9 @@ import java.util.Set;
         "  thread -b\n" +
         "  thread -i 2000\n" +
         "  thread --state BLOCKED\n" +
+        "  thread -top\n" +
+        "  thread -top 10\n" +
+        "  thread -top 5 -i 3000\n" +
         Constants.WIKI + Constants.WIKI_HOME + "thread")
 public class ThreadCommand extends AnnotatedCommand {
     private static Set<String> states = null;
@@ -53,6 +56,8 @@ public class ThreadCommand extends AnnotatedCommand {
     private boolean findMostBlockingThread = false;
     private int sampleInterval = 200;
     private String state;
+    private Integer topN = null;
+    private int cpuTopInterval = 2000;
 
     private boolean lockedMonitors = false;
     private boolean lockedSynchronizers = false;
@@ -95,6 +100,18 @@ public class ThreadCommand extends AnnotatedCommand {
         this.sampleInterval = sampleInterval;
     }
 
+    @Option(shortName = "top", longName = "top-n-threads")
+    @Description("Display the top n threads with the highest CPU usage (default 5).")
+    public void setTopN(Integer topN) {
+        this.topN = topN;
+    }
+
+    @Option(shortName = "i", longName = "interval")
+    @Description("Specify the sampling interval (in ms) for CPU Top (default 2000ms, minimum 500ms).")
+    public void setCpuTopInterval(int cpuTopInterval) {
+        this.cpuTopInterval = cpuTopInterval;
+    }
+
     @Option(longName = "state")
     @Description("Display the thread filter by the state. NEW, RUNNABLE, TIMED_WAITING, WAITING, BLOCKED, TERMINATED is optional.")
     public void setState(String state) {
@@ -122,6 +139,8 @@ public class ThreadCommand extends AnnotatedCommand {
             exitStatus = processTopBusyThreads(process);
         } else if (findMostBlockingThread) {
             exitStatus = processBlockingThread(process);
+        } else if (topN != null) {
+            exitStatus = processCpuTopThreads(process);
         } else {
             exitStatus = processAllThreads(process);
         }
@@ -161,7 +180,7 @@ public class ThreadCommand extends AnnotatedCommand {
             resultThreads = threads;
         }
 
-        //thread stats
+        // thread stats
         ThreadSampler threadSampler = new ThreadSampler();
         threadSampler.setIncludeInternalThreads(includeInternalThreads);
         threadSampler.sample(resultThreads);
@@ -203,12 +222,13 @@ public class ThreadCommand extends AnnotatedCommand {
             }
         }
 
-        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(ArrayUtils.toPrimitive(tids.toArray(new Long[0])), lockedMonitors, lockedSynchronizers);
-        if (tids.size()> 0 && threadInfos == null) {
+        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(ArrayUtils.toPrimitive(tids.toArray(new Long[0])),
+                lockedMonitors, lockedSynchronizers);
+        if (tids.size() > 0 && threadInfos == null) {
             return ExitStatus.failure(1, "get top busy threads failed");
         }
 
-        //threadInfo with cpuUsage
+        // threadInfo with cpuUsage
         List<BusyThreadInfo> busyThreadInfos = new ArrayList<BusyThreadInfo>(topNThreads.size());
         for (ThreadVO thread : topNThreads) {
             ThreadInfo threadInfo = findThreadInfoById(threadInfos, thread.getId());
@@ -232,12 +252,58 @@ public class ThreadCommand extends AnnotatedCommand {
     }
 
     private ExitStatus processThread(CommandProcess process) {
-        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(new long[]{id}, lockedMonitors, lockedSynchronizers);
+        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(new long[] { id }, lockedMonitors, lockedSynchronizers);
         if (threadInfos == null || threadInfos.length < 1 || threadInfos[0] == null) {
             return ExitStatus.failure(1, "thread do not exist! id: " + id);
         }
 
         process.appendResult(new ThreadModel(threadInfos[0]));
+        return ExitStatus.success();
+    }
+
+    private ExitStatus processCpuTopThreads(CommandProcess process) {
+        // Validate interval
+        if (cpuTopInterval < 500) {
+            return ExitStatus.failure(1, "Illegal argument, interval must be at least 500ms.");
+        }
+
+        // Validate topN
+        int n = topN != null ? topN : 5;
+        if (n < 1) {
+            return ExitStatus.failure(1, "Illegal argument, top n must be at least 1.");
+        }
+
+        ThreadSampler threadSampler = new ThreadSampler();
+        threadSampler.sample(ThreadUtil.getThreads());
+        threadSampler.pause(cpuTopInterval);
+        List<ThreadVO> threadStats = threadSampler.sample(ThreadUtil.getThreads());
+
+        int limit = Math.min(threadStats.size(), n);
+        List<ThreadVO> topNThreads = threadStats.subList(0, limit);
+
+        List<Long> tids = new ArrayList<Long>(topNThreads.size());
+        for (ThreadVO thread : topNThreads) {
+            if (thread.getId() > 0) {
+                tids.add(thread.getId());
+            }
+        }
+
+        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(ArrayUtils.toPrimitive(tids.toArray(new Long[0])),
+                lockedMonitors, lockedSynchronizers);
+        if (tids.size() > 0 && threadInfos == null) {
+            return ExitStatus.failure(1, "get top CPU threads failed");
+        }
+
+        // threadInfo with cpuUsage
+        List<BusyThreadInfo> busyThreadInfos = new ArrayList<BusyThreadInfo>(topNThreads.size());
+        for (ThreadVO thread : topNThreads) {
+            ThreadInfo threadInfo = findThreadInfoById(threadInfos, thread.getId());
+            if (threadInfo != null) {
+                BusyThreadInfo busyThread = new BusyThreadInfo(thread, threadInfo);
+                busyThreadInfos.add(busyThread);
+            }
+        }
+        process.appendResult(new ThreadModel(busyThreadInfos));
         return ExitStatus.success();
     }
 }
