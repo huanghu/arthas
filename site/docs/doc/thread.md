@@ -12,8 +12,9 @@
 | ------------: | :------------------------------------------------------ |
 |          _id_ | 线程 id                                                 |
 |          [n:] | 指定最忙的前 N 个线程并打印堆栈                         |
+|        [top:] | 指定采样时间窗口内 CPU 占用最高的前 N 个线程并打印堆栈   |
 |           [b] | 找出当前阻塞其他线程的线程                              |
-| [i `<value>`] | 指定 cpu 使用率统计的采样间隔，单位为毫秒，默认值为 200 |
+| [i `<value>`] | 指定 cpu 使用率统计的采样间隔，单位为毫秒，默认值为 2000 |
 |       [--all] | 显示所有匹配的线程                                      |
 
 ## cpu 使用率是如何统计出来的？
@@ -169,6 +170,33 @@ $ thread -b
 - `thread -i 1000` : 统计最近 1000ms 内的线程 CPU 时间。
 
 - `thread -n 3 -i 1000` : 列出 1000ms 内最忙的 3 个线程栈
+
+### thread -top, 展示采样时间窗口内 CPU 占用最高的前 N 个线程
+
+- `thread -top 5` : 展示最近 2000ms 内 CPU 占用最高的前 5 个线程并打印堆栈
+
+- `thread -top 3 -i 3000` : 展示最近 3000ms 内 CPU 占用最高的前 3 个线程并打印堆栈
+
+```bash
+$ thread -top 3
+"as-command-execute-daemon" Id=4759 cpuUsage=23% RUNNABLE
+    at sun.management.ThreadImpl.dumpThreads0(Native Method)
+    at sun.management.ThreadImpl.getThreadInfo(ThreadImpl.java:440)
+    at com.taobao.arthas.core.command.monitor200.ThreadCommand.processTopCPUThreads(ThreadCommand.java:245)
+    at com.taobao.arthas.core.command.monitor200.ThreadCommand.process(ThreadCommand.java:133)
+    at com.taobao.arthas.core.shell.command.impl.AnnotatedCommandImpl.process(AnnotatedCommandImpl.java:96)
+    at com.taobao.arthas.core.shell.command.impl.AnnotatedCommandImpl.access$100(AnnotatedCommandImpl.java:27)
+    at com.taobao.arthas.core.shell.command.impl.AnnotatedCommandImpl$ProcessHandler.handle(AnnotatedCommandImpl.java:125)
+    at com.taobao.arthas.core.shell.command.impl.AnnotatedCommandImpl$ProcessHandler.handle(AnnotatedCommandImpl.java:122)
+    at com.taobao.arthas.core.shell.system.impl.ProcessImpl$CommandProcessTask.run(ProcessImpl.java:332)
+    at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1142)
+    at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:617)
+    at java.lang.Thread.run(Thread.java:756)
+
+    Number of locked synchronizers = 1
+    - java.util.concurrent.ThreadPoolExecutor$Worker@546aeec1
+...
+```
 
 ```bash
 $ thread -n 3 -i 1000

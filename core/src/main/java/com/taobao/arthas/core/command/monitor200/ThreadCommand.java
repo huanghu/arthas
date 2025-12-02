@@ -1,5 +1,17 @@
 package com.taobao.arthas.core.command.monitor200;
 
+import java.lang.Thread.State;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.command.model.BlockingLockInfo;
 import com.taobao.arthas.core.command.model.BusyThreadInfo;
@@ -18,18 +30,6 @@ import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
 
-import java.lang.Thread.State;
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
-import java.lang.management.ThreadMXBean;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 /**
  * @author hengyunabc 2015年12月7日 下午2:06:21
  */
@@ -40,6 +40,8 @@ import java.util.Set;
         "  thread 51\n" +
         "  thread -n -1\n" +
         "  thread -n 5\n" +
+        "  thread -top 5\n" +
+        "  thread -top 5 -i 3000\n" +
         "  thread -b\n" +
         "  thread -i 2000\n" +
         "  thread --state BLOCKED\n" +
@@ -50,6 +52,7 @@ public class ThreadCommand extends AnnotatedCommand {
 
     private long id = -1;
     private Integer topNBusy = null;
+    private Integer topNCPU = null;
     private boolean findMostBlockingThread = false;
     private int sampleInterval = 200;
     private String state;
@@ -83,6 +86,12 @@ public class ThreadCommand extends AnnotatedCommand {
         this.topNBusy = topNBusy;
     }
 
+    @Option(shortName = "top", longName = "top-cpu-threads")
+    @Description("The number of thread(s) to show, ordered by cpu utilization in sampling interval, -1 to show all.")
+    public void setTopNCPU(Integer topNCPU) {
+        this.topNCPU = topNCPU;
+    }
+
     @Option(shortName = "b", longName = "include-blocking-thread", flag = true)
     @Description("Find the thread who is holding a lock that blocks the most number of threads.")
     public void setFindMostBlockingThread(boolean findMostBlockingThread) {
@@ -92,7 +101,12 @@ public class ThreadCommand extends AnnotatedCommand {
     @Option(shortName = "i", longName = "sample-interval")
     @Description("Specify the sampling interval (in ms) when calculating cpu usage.")
     public void setSampleInterval(int sampleInterval) {
-        this.sampleInterval = sampleInterval;
+        // 确保采样间隔不小于500ms
+        if (sampleInterval < 500) {
+            this.sampleInterval = 500;
+        } else {
+            this.sampleInterval = sampleInterval;
+        }
     }
 
     @Option(longName = "state")
@@ -118,6 +132,8 @@ public class ThreadCommand extends AnnotatedCommand {
         ExitStatus exitStatus;
         if (id > 0) {
             exitStatus = processThread(process);
+        } else if (topNCPU != null) {
+            exitStatus = processTopCPUThreads(process);
         } else if (topNBusy != null) {
             exitStatus = processTopBusyThreads(process);
         } else if (findMostBlockingThread) {
@@ -130,18 +146,6 @@ public class ThreadCommand extends AnnotatedCommand {
 
     private ExitStatus processAllThreads(CommandProcess process) {
         List<ThreadVO> threads = ThreadUtil.getThreads();
-
-        // 统计各种线程状态
-        Map<State, Integer> stateCountMap = new LinkedHashMap<State, Integer>();
-        for (State s : State.values()) {
-            stateCountMap.put(s, 0);
-        }
-
-        for (ThreadVO thread : threads) {
-            State threadState = thread.getState();
-            Integer count = stateCountMap.get(threadState);
-            stateCountMap.put(threadState, count + 1);
-        }
 
         boolean includeInternalThreads = true;
         Collection<ThreadVO> resultThreads = new ArrayList<ThreadVO>();
@@ -168,6 +172,20 @@ public class ThreadCommand extends AnnotatedCommand {
         threadSampler.pause(sampleInterval);
         List<ThreadVO> threadStats = threadSampler.sample(resultThreads);
 
+        // 统计各种线程状态（基于过滤后的线程）
+        Map<State, Integer> stateCountMap = new LinkedHashMap<State, Integer>();
+        for (State s : State.values()) {
+            stateCountMap.put(s, 0);
+        }
+ 
+        for (ThreadVO thread : threadStats) {
+            State threadState = thread.getState();
+            if (threadState != null) {
+                Integer count = stateCountMap.get(threadState);
+                stateCountMap.put(threadState, count + 1);
+            }
+        }
+
         process.appendResult(new ThreadModel(threadStats, stateCountMap, all));
         return ExitStatus.success();
     }
@@ -182,33 +200,107 @@ public class ThreadCommand extends AnnotatedCommand {
     }
 
     private ExitStatus processTopBusyThreads(CommandProcess process) {
+        // 验证采样间隔
+        if (sampleInterval < 500) {
+            return ExitStatus.failure(1, "Illegal argument, sample interval must be at least 500ms");
+        }
+
         ThreadSampler threadSampler = new ThreadSampler();
+        threadSampler.setIncludeInternalThreads(false); // 不包含内部线程
         threadSampler.sample(ThreadUtil.getThreads());
         threadSampler.pause(sampleInterval);
         List<ThreadVO> threadStats = threadSampler.sample(ThreadUtil.getThreads());
 
-        int limit = Math.min(threadStats.size(), topNBusy);
+        // 过滤掉ID为-1的内部线程，确保只显示用户线程
+        List<ThreadVO> userThreads = new ArrayList<ThreadVO>();
+        for (ThreadVO thread : threadStats) {
+            if (thread.getId() > 0) {
+                userThreads.add(thread);
+            }
+        }
+
+        int limit = topNBusy > 0 ? Math.min(userThreads.size(), topNBusy) : userThreads.size();
 
         List<ThreadVO> topNThreads = null;
+
         if (limit > 0) {
-            topNThreads = threadStats.subList(0, limit);
+            topNThreads = userThreads.subList(0, limit);
         } else { // -1 for all threads
-            topNThreads = threadStats;
+            topNThreads = userThreads;
         }
 
         List<Long> tids = new ArrayList<Long>(topNThreads.size());
         for (ThreadVO thread : topNThreads) {
-            if (thread.getId() > 0) {
-                tids.add(thread.getId());
-            }
+            tids.add(thread.getId());
         }
 
-        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(ArrayUtils.toPrimitive(tids.toArray(new Long[0])), lockedMonitors, lockedSynchronizers);
-        if (tids.size()> 0 && threadInfos == null) {
+        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(ArrayUtils.toPrimitive(tids.toArray(new Long[0])),
+                lockedMonitors, lockedSynchronizers);
+        if (tids.size() > 0 && threadInfos == null) {
             return ExitStatus.failure(1, "get top busy threads failed");
         }
 
-        //threadInfo with cpuUsage
+        // threadInfo with cpuUsage
+        List<BusyThreadInfo> busyThreadInfos = new ArrayList<BusyThreadInfo>(topNThreads.size());
+        for (ThreadVO thread : topNThreads) {
+            ThreadInfo threadInfo = findThreadInfoById(threadInfos, thread.getId());
+            if (threadInfo != null) {
+                BusyThreadInfo busyThread = new BusyThreadInfo(thread, threadInfo);
+                busyThreadInfos.add(busyThread);
+            }
+        }
+        process.appendResult(new ThreadModel(busyThreadInfos));
+        return ExitStatus.success();
+    }
+
+    private ExitStatus processTopCPUThreads(CommandProcess process) {
+        // 验证采样间隔
+        if (sampleInterval < 500) {
+            return ExitStatus.failure(1, "Illegal argument, sample interval must be at least 500ms");
+        }
+
+        // 使用默认值5
+        int n = topNCPU != null ? topNCPU : 5;
+        if (n == 0) {
+            return ExitStatus.failure(1, "Illegal argument, top number must be greater than 0 or -1");
+        }
+
+        ThreadSampler threadSampler = new ThreadSampler();
+        threadSampler.setIncludeInternalThreads(false); // 不包含内部线程
+        threadSampler.sample(ThreadUtil.getThreads());
+        threadSampler.pause(sampleInterval);
+        List<ThreadVO> threadStats = threadSampler.sample(ThreadUtil.getThreads());
+
+        // 过滤掉ID为-1的内部线程，确保只显示用户线程
+        List<ThreadVO> userThreads = new ArrayList<ThreadVO>();
+        for (ThreadVO thread : threadStats) {
+            if (thread.getId() > 0) {
+                userThreads.add(thread);
+            }
+        }
+
+        int limit = n > 0 ? Math.min(userThreads.size(), n) : userThreads.size();
+
+        List<ThreadVO> topNThreads = null;
+        if (limit > 0) {
+            topNThreads = userThreads.subList(0, limit);
+
+        } else { // -1 for all threads
+            topNThreads = userThreads;
+        }
+
+        List<Long> tids = new ArrayList<Long>(topNThreads.size());
+        for (ThreadVO thread : topNThreads) {
+            tids.add(thread.getId());
+        }
+
+        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(ArrayUtils.toPrimitive(tids.toArray(new Long[0])),
+                lockedMonitors, lockedSynchronizers);
+        if (tids.size() > 0 && threadInfos == null) {
+            return ExitStatus.failure(1, "get top cpu threads failed");
+        }
+
+        // threadInfo with cpuUsage
         List<BusyThreadInfo> busyThreadInfos = new ArrayList<BusyThreadInfo>(topNThreads.size());
         for (ThreadVO thread : topNThreads) {
             ThreadInfo threadInfo = findThreadInfoById(threadInfos, thread.getId());
@@ -232,7 +324,7 @@ public class ThreadCommand extends AnnotatedCommand {
     }
 
     private ExitStatus processThread(CommandProcess process) {
-        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(new long[]{id}, lockedMonitors, lockedSynchronizers);
+        ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(new long[] { id }, lockedMonitors, lockedSynchronizers);
         if (threadInfos == null || threadInfos.length < 1 || threadInfos[0] == null) {
             return ExitStatus.failure(1, "thread do not exist! id: " + id);
         }
