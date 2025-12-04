@@ -65,6 +65,11 @@ public class JadCommand extends AnnotatedCommand {
      */
     private boolean sourceOnly = false;
 
+    /**
+     * Relink constants - if there is an inlined reference to a field, attempt to de-inline.
+     */
+    private boolean relinkConstants = true;
+
     @Argument(argName = "class-pattern", index = 0)
     @Description("Class name pattern, use either '.' or '/' as separator")
     public void setClassPattern(String classPattern) {
@@ -119,6 +124,12 @@ public class JadCommand extends AnnotatedCommand {
     @Description("Sets the destination directory for dumped class files required by cfr decompiler")
     public void setDirectory(String directory) {
         this.directory = directory;
+    }
+
+    @Option(longName = "no-relink-const", flag = true)
+    @Description("Disable relinking constants, which may help to show inlined field references")
+    public void setNoRelinkConst(boolean noRelinkConst) {
+        this.relinkConstants = !noRelinkConst;
     }
 
     @Override
@@ -193,7 +204,7 @@ public class JadCommand extends AnnotatedCommand {
                 "\" or try with \"-d/--directory\" to specify the directory of dump files");
             }
             File classFile = classFiles.get(c);
-            Pair<String,NavigableMap<Integer,Integer>> decompileResult = Decompiler.decompileWithMappings(classFile.getAbsolutePath(), methodName, hideUnicode, lineNumber);
+            Pair<String,NavigableMap<Integer,Integer>> decompileResult = Decompiler.decompileWithMappings(classFile.getAbsolutePath(), methodName, hideUnicode, lineNumber, relinkConstants);
             String source = decompileResult.getFirst();
             if (source != null) {
                 source = pattern.matcher(source).replaceAll("");
