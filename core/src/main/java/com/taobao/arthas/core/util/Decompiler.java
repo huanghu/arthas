@@ -79,6 +79,8 @@ public class Decompiler {
         options.put("showversion", "false");
         options.put("hideutf", String.valueOf(hideUnicode));
         options.put("trackbytecodeloc", "true");
+        // Enable relinkconst to handle inlined field references
+        options.put("relinkconst", "true");
         if (!StringUtils.isBlank(methodName)) {
             options.put("methodname", methodName);
         }
