@@ -79,6 +79,8 @@ public class Decompiler {
         options.put("showversion", "false");
         options.put("hideutf", String.valueOf(hideUnicode));
         options.put("trackbytecodeloc", "true");
+        // 禁用删除死方法选项，以避免方法体丢失
+        options.put("removedeadmethods", "false");
         if (!StringUtils.isBlank(methodName)) {
             options.put("methodname", methodName);
         }

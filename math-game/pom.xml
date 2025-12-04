@@ -11,6 +11,15 @@
     <name>math-game</name>
     <url>https://github.com/alibaba/arthas</url>
 
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.12</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
     <build>
         <finalName>math-game</finalName>
         <plugins>
