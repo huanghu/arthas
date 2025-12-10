@@ -14,6 +14,8 @@ import org.benf.cfr.reader.api.CfrDriver;
 import org.benf.cfr.reader.api.OutputSinkFactory;
 import org.benf.cfr.reader.api.SinkReturns.LineNumberMapping;
 
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.taobao.arthas.common.Pair;
 
 /**
@@ -22,6 +24,7 @@ import com.taobao.arthas.common.Pair;
  *
  */
 public class Decompiler {
+    private static final Logger logger = LoggerFactory.getLogger(Decompiler.class);
 
     public static String decompile(String classFilePath, String methodName) {
         return decompile(classFilePath, methodName, false);
@@ -31,10 +34,11 @@ public class Decompiler {
         return decompile(classFilePath, methodName, hideUnicode, true);
     }
 
-    public static Pair<String, NavigableMap<Integer, Integer>> decompileWithMappings(String classFilePath,
+    public static Pair<String, NavigableMap<Integer, Integer>> decompileWithMappings(String classFilePath, 
             String methodName, boolean hideUnicode, boolean printLineNumber) {
+        logger.debug("开始反编译类文件: {}, 方法: {}", classFilePath, methodName);
+        
         final StringBuilder sb = new StringBuilder(8192);
-
         final NavigableMap<Integer, Integer> lineMapping = new TreeMap<Integer, Integer>();
 
         OutputSinkFactory mySink = new OutputSinkFactory() {
@@ -81,20 +85,33 @@ public class Decompiler {
         options.put("trackbytecodeloc", "true");
         // 禁用删除死方法选项，以避免方法体丢失
         options.put("removedeadmethods", "false");
+        
+        logger.debug("反编译选项配置: hideUnicode={}, printLineNumber={}, removedeadmethods=false", 
+                hideUnicode, printLineNumber);
+        
         if (!StringUtils.isBlank(methodName)) {
             options.put("methodname", methodName);
+            logger.debug("指定反编译方法: {}", methodName);
         }
 
         CfrDriver driver = new CfrDriver.Builder().withOptions(options).withOutputSink(mySink).build();
         List<String> toAnalyse = new ArrayList<String>();
         toAnalyse.add(classFilePath);
+        
+        logger.debug("执行反编译分析...");
         driver.analyse(toAnalyse);
+        logger.debug("反编译分析完成");
 
         String resultCode = sb.toString();
+        
+        logger.debug("反编译结果长度: {} 字符", resultCode.length());
+        
         if (printLineNumber && !lineMapping.isEmpty()) {
+            logger.debug("添加行号映射，共 {} 个映射条目", lineMapping.size());
             resultCode = addLineNumber(resultCode, lineMapping);
         }
 
+        logger.debug("反编译完成，返回结果");
         return Pair.make(resultCode, lineMapping);
     }
 
